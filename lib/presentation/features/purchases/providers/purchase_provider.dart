@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -21,8 +23,7 @@ class RevenueCatConfig {
   static const entitlementId = 'Mono Dash Unlimited';
   static const offeringId = 'default';
   static const freeServerLimit = 1;
-  // Local debug switch: set to true to skip the paid server limit check.
-  static const bypassServerLimitCheck = true;
+  static const bypassServerLimitCheck = false;
 
   static String? get apiKey {
     if (kIsWeb) return webApiKey.isEmpty ? null : webApiKey;
@@ -117,14 +118,22 @@ class PurchaseUnavailableException implements Exception {
 class PurchaseController extends AsyncNotifier<PurchaseState> {
   static const _tag = 'purchase';
   static const _localUnlockKey = 'purchase.unlimited_servers.unlocked';
+  static const _revenueCatReadTimeout = Duration(seconds: 12);
   static bool _configured = false;
 
   @override
-  Future<PurchaseState> build() async {
+  Future<PurchaseState> build() => _loadInitialState();
+
+  static bool isLocallyUnlocked(WidgetRef ref) {
+    return ref.read(storageServiceProvider).getString(_localUnlockKey) ==
+        'true';
+  }
+
+  Future<PurchaseState> _loadInitialState() async {
     final l10n = ref.read(appLocalizationsProvider);
     final apiKey = RevenueCatConfig.apiKey;
     if (apiKey == null) {
-      final localUnlocked = _isLocallyUnlocked();
+      final localUnlocked = _isLocallyUnlocked(ref);
       return PurchaseState(
         isConfigured: false,
         isUnlocked: localUnlocked,
@@ -141,7 +150,7 @@ class PurchaseController extends AsyncNotifier<PurchaseState> {
     } catch (error) {
       // SDK 初始化失败（极少见，比如平台不支持），完全无法走内购链路
       AppLogger.w(_tag, 'Purchase service initialization failed: $error');
-      final localUnlocked = _isLocallyUnlocked();
+      final localUnlocked = _isLocallyUnlocked(ref);
       return PurchaseState(
         isConfigured: false,
         isUnlocked: localUnlocked,
@@ -158,7 +167,7 @@ class PurchaseController extends AsyncNotifier<PurchaseState> {
       return await _loadState();
     } catch (error) {
       AppLogger.w(_tag, 'Purchase state load failed: $error');
-      final localUnlocked = _isLocallyUnlocked();
+      final localUnlocked = _isLocallyUnlocked(ref);
       return PurchaseState(
         isConfigured: true,
         isUnlocked: localUnlocked,
@@ -172,18 +181,17 @@ class PurchaseController extends AsyncNotifier<PurchaseState> {
   }
 
   Future<PurchaseState> refresh() async {
-    final current = state.valueOrNull;
-    if (current != null && !current.isConfigured) return current;
-
     state = const AsyncValue.loading();
-    final next = await AsyncValue.guard(_loadState);
-    state = next;
-    return next.requireValue;
+    final next = await _loadInitialState();
+    state = AsyncValue.data(next);
+    return next;
   }
 
   Future<PurchaseState> restorePurchases() async {
     _ensureConfigured();
-    final customerInfo = await rc.Purchases.restorePurchases();
+    final customerInfo = await _withRevenueCatReadTimeout(
+      rc.Purchases.restorePurchases(),
+    );
     final next = await _stateFromCustomerInfo(customerInfo);
     state = AsyncValue.data(next);
     return next;
@@ -216,17 +224,21 @@ class PurchaseController extends AsyncNotifier<PurchaseState> {
 
   Future<void> _configure(String apiKey) async {
     if (_configured) return;
-    await rc.Purchases.configure(rc.PurchasesConfiguration(apiKey));
+    await _withRevenueCatReadTimeout(
+      rc.Purchases.configure(rc.PurchasesConfiguration(apiKey)),
+    );
     _configured = true;
   }
 
   Future<PurchaseState> _loadState() async {
     try {
-      final customerInfo = await rc.Purchases.getCustomerInfo();
+      final customerInfo = await _withRevenueCatReadTimeout(
+        rc.Purchases.getCustomerInfo(),
+      );
       return _stateFromCustomerInfo(customerInfo);
     } catch (error) {
       AppLogger.w(_tag, 'Purchase status refresh failed: $error');
-      final localUnlocked = _isLocallyUnlocked();
+      final localUnlocked = _isLocallyUnlocked(ref);
       if (!localUnlocked) rethrow;
       return PurchaseState(
         isConfigured: true,
@@ -279,7 +291,9 @@ class PurchaseController extends AsyncNotifier<PurchaseState> {
   }
 
   Future<rc.Package?> _loadPurchasePackage() async {
-    final offerings = await rc.Purchases.getOfferings();
+    final offerings = await _withRevenueCatReadTimeout(
+      rc.Purchases.getOfferings(),
+    );
     final offering = RevenueCatConfig.offeringId.isEmpty
         ? offerings.current
         : offerings.all[RevenueCatConfig.offeringId];
@@ -297,7 +311,11 @@ class PurchaseController extends AsyncNotifier<PurchaseState> {
     }
   }
 
-  bool _isLocallyUnlocked() {
+  static Future<T> _withRevenueCatReadTimeout<T>(Future<T> request) {
+    return request.timeout(_revenueCatReadTimeout);
+  }
+
+  static bool _isLocallyUnlocked(Ref ref) {
     return ref.read(storageServiceProvider).getString(_localUnlockKey) ==
         'true';
   }

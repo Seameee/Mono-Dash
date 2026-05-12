@@ -1707,7 +1707,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get purchases_serviceUnavailableNetwork =>
-      'Purchase service is temporarily unavailable. Check your network and try again.';
+      'Purchase service is temporarily unavailable. Allow this app to use the network, then try again.';
 
   @override
   String get purchases_noPackageAvailable =>

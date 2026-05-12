@@ -1671,7 +1671,7 @@ class AppLocalizationsZh extends AppLocalizations {
       '购买服务暂不可用，已使用本机购买凭证离线解锁';
 
   @override
-  String get purchases_serviceUnavailableNetwork => '购买服务暂不可用，请检查网络后再试';
+  String get purchases_serviceUnavailableNetwork => '购买服务暂不可用，请允许 App 使用网络后重试';
 
   @override
   String get purchases_noPackageAvailable => 'RevenueCat 当前 Offering 中没有可购买套餐';

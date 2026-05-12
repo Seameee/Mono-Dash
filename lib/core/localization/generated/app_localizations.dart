@@ -3173,7 +3173,7 @@ abstract class AppLocalizations {
   /// Purchase state message when purchase service is unavailable.
   ///
   /// In en, this message translates to:
-  /// **'Purchase service is temporarily unavailable. Check your network and try again.'**
+  /// **'Purchase service is temporarily unavailable. Allow this app to use the network, then try again.'**
   String get purchases_serviceUnavailableNetwork;
 
   /// Error shown when RevenueCat has no package in the current offering.

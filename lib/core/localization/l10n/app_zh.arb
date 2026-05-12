@@ -512,7 +512,7 @@
   "purchases_offlineUnlocked": "已使用本机购买凭证离线解锁",
   "purchases_apiKeyMissing": "当前构建未配置 RevenueCat API Key",
   "purchases_serviceUnavailableOfflineUnlocked": "购买服务暂不可用，已使用本机购买凭证离线解锁",
-  "purchases_serviceUnavailableNetwork": "购买服务暂不可用，请检查网络后再试",
+  "purchases_serviceUnavailableNetwork": "购买服务暂不可用，请允许 App 使用网络后重试",
   "purchases_noPackageAvailable": "RevenueCat 当前 Offering 中没有可购买套餐",
   "purchases_packageLoadFailed": "购买套餐暂时无法加载，请稍后再试",
   "purchases_serviceNotInitialized": "购买服务尚未初始化",

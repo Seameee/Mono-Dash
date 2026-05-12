@@ -7,6 +7,7 @@ import '../../../../core/localization/l10n_x.dart';
 import '../../../../core/localization/locale_controller.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../common/app_toast.dart';
+import '../../../common/components/app_empty_state.dart';
 import '../../../common/components/frosted_scaffold.dart';
 import '../../purchases/providers/purchase_provider.dart';
 import '../providers/servers_provider.dart';
@@ -28,6 +29,7 @@ class PremiumPurchasePage extends ConsumerWidget {
         ref.watch(serversNotifierProvider).valueOrNull?.length ?? 0;
     final purchaseState = purchaseAsync.valueOrNull;
     final isUnlocked = purchaseState?.isUnlocked ?? false;
+    final purchaseError = _purchaseError(purchaseAsync, purchaseState);
 
     return FrostedScaffold(
       title: 'Mono Dash',
@@ -55,6 +57,10 @@ class PremiumPurchasePage extends ConsumerWidget {
                 ),
                 const SizedBox(height: 48),
                 if (!isUnlocked) ...[
+                  if (purchaseError != null) ...[
+                    _buildPurchaseErrorState(context, ref, purchaseError, l10n),
+                    const SizedBox(height: 18),
+                  ],
                   _buildPurchaseButton(context, ref, purchaseAsync, l10n),
                   const SizedBox(height: 16),
                   _buildRestoreButton(context, ref, purchaseAsync, l10n),
@@ -153,6 +159,10 @@ class PremiumPurchasePage extends ConsumerWidget {
   ) {
     final purchaseState = purchaseAsync.valueOrNull;
     final isLoading = purchaseAsync.isLoading;
+    final canPurchase =
+        !isLoading &&
+        (purchaseState?.isConfigured ?? false) &&
+        (purchaseState?.hasPackage ?? false);
     final price = purchaseState?.priceText ?? l10n.premium_loading;
 
     return Column(
@@ -164,7 +174,9 @@ class PremiumPurchasePage extends ConsumerWidget {
             padding: EdgeInsets.zero,
             color: CupertinoColors.activeBlue,
             borderRadius: BorderRadius.circular(16),
-            onPressed: isLoading ? null : () => _purchaseUnlimitedServers(ref),
+            onPressed: canPurchase
+                ? () => _purchaseUnlimitedServers(ref)
+                : null,
             child: isLoading
                 ? const CupertinoActivityIndicator(color: CupertinoColors.white)
                 : Text(
@@ -195,8 +207,11 @@ class PremiumPurchasePage extends ConsumerWidget {
     AsyncValue<PurchaseState> purchaseAsync,
     AppLocalizations l10n,
   ) {
+    final purchaseState = purchaseAsync.valueOrNull;
+    final canRestore =
+        !purchaseAsync.isLoading && (purchaseState?.isConfigured ?? false);
     return CupertinoButton(
-      onPressed: purchaseAsync.isLoading ? null : () => _restorePurchases(ref),
+      onPressed: canRestore ? () => _restorePurchases(ref) : null,
       child: Text(
         l10n.premium_restore,
         style: TextStyle(
@@ -205,6 +220,29 @@ class PremiumPurchasePage extends ConsumerWidget {
           color: AppColors.secondaryLabel(context),
         ),
       ),
+    );
+  }
+
+  Object? _purchaseError(
+    AsyncValue<PurchaseState> purchaseAsync,
+    PurchaseState? purchaseState,
+  ) {
+    if (purchaseAsync.hasError) return purchaseAsync.error;
+    if (purchaseAsync.isLoading) return null;
+    return purchaseState?.message;
+  }
+
+  Widget _buildPurchaseErrorState(
+    BuildContext context,
+    WidgetRef ref,
+    Object error,
+    AppLocalizations l10n,
+  ) {
+    return AppErrorState(
+      title: l10n.common_loadingFailed,
+      error: error,
+      padding: EdgeInsets.zero,
+      onRetry: () => _retryPurchaseState(ref),
     );
   }
 
@@ -337,6 +375,17 @@ class PremiumPurchasePage extends ConsumerWidget {
     } catch (error) {
       showAppErrorToast(
         ref.read(appLocalizationsProvider).premium_restoreFailed,
+        description: '$error',
+      );
+    }
+  }
+
+  Future<void> _retryPurchaseState(WidgetRef ref) async {
+    try {
+      await ref.read(purchaseControllerProvider.notifier).refresh();
+    } catch (error) {
+      showAppErrorToast(
+        ref.read(appLocalizationsProvider).common_loadingFailed,
         description: '$error',
       );
     }

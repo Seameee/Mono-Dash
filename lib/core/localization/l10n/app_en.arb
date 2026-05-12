@@ -2379,7 +2379,7 @@
   "@purchases_serviceUnavailableOfflineUnlocked": {
     "description": "Purchase state message when purchase service is unavailable but local receipt unlocks the app."
   },
-  "purchases_serviceUnavailableNetwork": "Purchase service is temporarily unavailable. Check your network and try again.",
+  "purchases_serviceUnavailableNetwork": "Purchase service is temporarily unavailable. Allow this app to use the network, then try again.",
   "@purchases_serviceUnavailableNetwork": {
     "description": "Purchase state message when purchase service is unavailable."
   },
