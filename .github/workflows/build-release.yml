@@ -117,21 +117,30 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Decode keystore and build with signing
-        if: env.ANDROID_KEYSTORE_BASE64 != ''
+      - name: Setup signing for release build
         run: |
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/keystore.jks
-          cat > android/key.properties <<EOF
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/keystore.jks
+            cat > android/key.properties <<EOF
           storeFile=keystore.jks
           storePassword=$ANDROID_KEYSTORE_PASSWORD
           keyPassword=$ANDROID_KEY_PASSWORD
           keyAlias=$ANDROID_KEY_ALIAS
           EOF
+          else
+            echo "No keystore provided, creating placeholder key.properties for release build"
+            cat > android/key.properties <<EOF
+          storeFile=
+          storePassword=
+          keyPassword=
+          keyAlias=
+          EOF
+          fi
 
-      - name: Build APK (split per ABI)
+      - name: Build APK (unsigned release)
         run: flutter build apk --split-per-abi --release
 
-      - name: Build AAB
+      - name: Build AAB (unsigned release)
         run: flutter build appbundle --release
 
       - name: Upload Android artifacts
@@ -255,7 +264,7 @@ jobs:
       - name: Package Linux tar.gz
         run: |
           cd build/linux/x64/release/bundle
-          tar -czvf "../../../../../../Mono-Dash-v${{ needs.metadata.outputs.version }}-linux.tar.gz" *
+          tar -czvf "$GITHUB_WORKSPACE/Mono-Dash-v${{ needs.metadata.outputs.version }}-linux.tar.gz" *
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
