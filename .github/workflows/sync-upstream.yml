@@ -1,0 +1,57 @@
+name: Sync from Upstream
+
+on:
+  schedule:
+    # Run at 05:00 UTC every day (can be changed to desired frequency)
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+    # Allow manual triggering with optional inputs
+    inputs:
+      sync_mode:
+        description: 'Sync mode: pr (create PR) or direct (direct push)'
+        required: false
+        default: 'pr'
+        type: choice
+        options:
+          - pr
+          - direct
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  sync-upstream:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Prefer a PAT with repo+workflow scopes if GITHUB_TOKEN lacks cross-repo PR permission
+          # Fallback to GITHUB_TOKEN if PAT is not set
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Sync upstream using sync-upstream-action
+        uses: kuma0128/sync-upstream-action@v1
+        id: sync
+        with:
+          # ⬇️ IMPORTANT: Update this to your upstream owner/repo
+          upstream_repo: 'bin64/Mono-Dash'
+          upstream_branch: 'main'
+          target_branch: 'main'
+          # Default to PR mode to avoid conflicts
+          mode: '${{ github.event.inputs.sync_mode || 'pr' }}'
+          pr_title: 'chore: sync upstream changes from bin64/Mono-Dash'
+          pr_labels: 'upstream-sync'
+          token: '${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}'
+          # If conflict occurs, create an issue automatically
+          create_issue_on_conflict: 'true'
+
+      - name: Report sync result
+        if: steps.sync.outputs.has_changes == 'true'
+        run: |
+          echo "✅ Upstream synced successfully!"
+          echo "Commits merged: ${{ steps.sync.outputs.commits }}"
+          echo "PR URL: ${{ steps.sync.outputs.pr_url }}"

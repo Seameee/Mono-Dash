@@ -1,0 +1,375 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. 1.2.3)'
+        required: false
+        default: ''
+
+env:
+  FLUTTER_VERSION: '3.29.0'
+
+jobs:
+  # ============================================================
+  # Job 1: Extract version and build metadata
+  # ============================================================
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      build_number: ${{ steps.version.outputs.build_number }}
+      release_tag: ${{ steps.version.outputs.release_tag }}
+      release_name: ${{ steps.version.outputs.release_name }}
+      should_release: ${{ steps.version.outputs.should_release }}
+      new_tag: ${{ steps.version.outputs.new_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Need push permission to create tags
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version from pubspec.yaml
+        id: version
+        run: |
+          FULL=$(sed -n 's/^version: //p' pubspec.yaml)
+          VER=$(echo "$FULL" | sed 's/\+.*//')
+          BUILD=$(echo "$FULL" | sed 's/.*+//')
+          # For manual dispatch, allow overriding version
+          if [ "${{ github.event.inputs.version }}" != "" ]; then
+            VER="${{ github.event.inputs.version }}"
+          fi
+          echo "version=$VER" >> $GITHUB_OUTPUT
+          echo "build_number=$BUILD" >> $GITHUB_OUTPUT
+          echo "release_tag=v$VER" >> $GITHUB_OUTPUT
+          echo "release_name=Mono Dash v$VER" >> $GITHUB_OUTPUT
+          echo "📦 Version: $VER (build $BUILD)"
+
+      - name: Check if tag already exists
+        id: check_tag
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "Tag $TAG does not exist"
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create and push new tag
+        id: create_tag
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+          echo "new_tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Created and pushed tag: $TAG"
+
+      - name: Set should_release output
+        id: set_release
+        run: |
+          if [ "${{ steps.check_tag.outputs.exists }}" == "false" ]; then
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "new_tag=${{ steps.create_tag.outputs.new_tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "new_tag=v${{ steps.version.outputs.version }}" >> $GITHUB_OUTPUT
+          fi
+  # ============================================================
+  # Job 2: Build Android APK / AAB
+  # ============================================================
+  build-android:
+    needs: metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # Optional: Decode signing keystore (skip if no signing needed)
+      - name: Decode Android keystore
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        run: |
+          echo '${{ secrets.ANDROID_KEYSTORE_BASE64 }}' | base64 -d > android/app/keystore.jks
+
+      - name: Create key.properties
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        run: |
+          echo "storeFile=keystore.jks" > android/key.properties
+          echo "storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" >> android/key.properties
+          echo "keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}" >> android/key.properties
+          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" >> android/key.properties
+
+      - name: Build APK (split per ABI)
+        run: flutter build apk --split-per-abi --release
+
+      - name: Build AAB
+        run: flutter build appbundle --release
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build
+          path: |
+            build/app/outputs/flutter-apk/*-release.apk
+            build/app/outputs/bundle/release/*.aab
+          if-no-files-found: error
+
+  # ============================================================
+  # Job 3: Build iOS (no code signing -> raw .app for AltStore)
+  # ============================================================
+  build-ios:
+    needs: metadata
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build iOS (no code sign)
+        run: flutter build ios --release --no-codesign
+
+      - name: Package into .ipa for AltStore
+        run: |
+          cd build/ios/iphoneos
+          # Create Payload directory
+          mkdir -p Payload
+          cp -R Runner.app Payload/
+          # Zip as .ipa (AltStore compatible unsigned .ipa)
+          zip -r "../../../Mono-Dash-v${{ needs.metadata.outputs.version }}-iOS.ipa" Payload
+          cd ../../..
+
+      - name: Upload iOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build
+          path: 'Mono-Dash-*-iOS.ipa'
+          if-no-files-found: error
+
+  # ============================================================
+  # Job 4: Build Windows
+  # ============================================================
+  build-windows:
+    needs: metadata
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable long paths in git
+        run: git config --system core.longpaths true
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Windows
+        run: flutter build windows --release
+
+      - name: Package Windows
+        shell: pwsh
+        run: |
+          $ver = "${{ needs.metadata.outputs.version }}"
+          $dest = "Mono-Dash-v$ver-windows.zip"
+          Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath $dest
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: 'Mono-Dash-*-windows.zip'
+          if-no-files-found: error
+
+  # ============================================================
+  # Job 5: Build Linux
+  # ============================================================
+  build-linux:
+    needs: metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake libgtk-3-dev ninja-build \
+            libayatana-appindicator3-dev libfuse2 patchelf
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Linux
+        run: flutter build linux --release
+
+      - name: Package Linux tar.gz
+        run: |
+          cd build/linux/x64/release/bundle
+          tar -czvf "../../../../../../Mono-Dash-v${{ needs.metadata.outputs.version }}-linux.tar.gz" *
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-build
+          path: 'Mono-Dash-*-linux.tar.gz'
+          if-no-files-found: error
+
+  # ============================================================
+  # Job 6: Build macOS
+  # ============================================================
+  build-macos:
+    needs: metadata
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build macOS
+        run: flutter build macos --release
+
+      - name: Package macOS
+        run: |
+          cd build/macos/Build/Products/Release
+          # Package as .zip (default way for unsigned macOS apps)
+          zip -r "../../../../../Mono-Dash-v${{ needs.metadata.outputs.version }}-macOS.zip" *.app
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-build
+          path: 'Mono-Dash-*-macOS.zip'
+          if-no-files-found: error
+
+  # ============================================================
+  # Job 7: Create GitHub Release and upload all artifacts
+  # ============================================================
+  release:
+    needs:
+      - metadata
+      - build-android
+      - build-ios
+      - build-windows
+      - build-linux
+      - build-macos
+    runs-on: ubuntu-latest
+    # Release only when metadata + all builds succeed (not cancelled)
+    if: |
+      always() && !cancelled() &&
+      needs.metadata.result == 'success' &&
+      needs.build-android.result == 'success' &&
+      needs.build-ios.result == 'success' &&
+      needs.build-windows.result == 'success' &&
+      needs.build-linux.result == 'success' &&
+      needs.build-macos.result == 'success'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes
+        run: |
+          TAG="${{ needs.metadata.outputs.release_tag }}"
+          # Get commits since previous tag or all if not available
+          PREV_TAG=$(git tag --list --sort=-version:refname | grep -v "^${TAG}$" | head -n1)
+          if [ -n "$PREV_TAG" ]; then
+            COMMITS=$(git log --no-merges --pretty=format:"- %s (%h)" "${PREV_TAG}..HEAD")
+          else
+            COMMITS=$(git log --no-merges --pretty=format:"- %s (%h)")
+          fi
+          cat > RELEASE_NOTES.md <<EOF
+          ## What's Changed
+          ${COMMITS:-No prior tag found — all commits included.}
+
+          ## Downloads
+          | Platform | File |
+          |----------|------|
+          | Android (arm64-v8a) | \`Mono-Dash-*-arm64-v8a-release.apk\` |
+          | Android (armeabi-v7a) | \`Mono-Dash-*-armeabi-v7a-release.apk\` |
+          | Android (x86_64) | \`Mono-Dash-*-x86_64-release.apk\` |
+          | Android (AAB) | \`app-release.aab\` |
+          | iOS (AltStore) | \`Mono-Dash-*-iOS.ipa\` |
+          | Windows | \`Mono-Dash-*-windows.zip\` |
+          | Linux | \`Mono-Dash-*-linux.tar.gz\` |
+          | macOS | \`Mono-Dash-*-macOS.zip\` |
+          EOF
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.metadata.outputs.release_tag }}
+          name: ${{ needs.metadata.outputs.release_name }}
+          body_path: RELEASE_NOTES.md
+          draft: true
+          prerelease: false
+          files: |
+            artifacts/android-build/*
+            artifacts/ios-build/*
+            artifacts/windows-build/*
+            artifacts/linux-build/*
+            artifacts/macos-build/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
