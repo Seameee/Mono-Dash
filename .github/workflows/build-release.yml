@@ -128,13 +128,8 @@ jobs:
           keyAlias=$ANDROID_KEY_ALIAS
           EOF
           else
-            echo "No keystore provided, creating placeholder key.properties for release build"
-            cat > android/key.properties <<EOF
-          storeFile=
-          storePassword=
-          keyPassword=
-          keyAlias=
-          EOF
+            echo "No keystore provided, patching build.gradle.kts to use debug signing"
+            sed -i 's/signingConfig = signingConfigs.getByName("release")/signingConfig = signingConfigs.getByName("debug")/g' android/app/build.gradle.kts
           fi
 
       - name: Build APK (unsigned release)
