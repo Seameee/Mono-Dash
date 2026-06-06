@@ -42,7 +42,7 @@ jobs:
           upstream_branch: 'main'
           target_branch: 'main'
           # Default to PR mode to avoid conflicts
-          mode: '${{ github.event.inputs.sync_mode || 'pr' }}'
+          mode: "${{ github.event.inputs.sync_mode || 'pr' }}"
           pr_title: 'chore: sync upstream changes from bin64/Mono-Dash'
           pr_labels: 'upstream-sync'
           token: '${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}'
