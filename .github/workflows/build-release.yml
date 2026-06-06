@@ -369,13 +369,9 @@ jobs:
           tag_name: ${{ needs.metadata.outputs.release_tag }}
           name: ${{ needs.metadata.outputs.release_name }}
           body_path: RELEASE_NOTES.md
-          draft: true
+          draft: false
           prerelease: false
           files: |
-            artifacts/android-build/*
-            artifacts/ios-build/*
-            artifacts/windows-build/*
-            artifacts/linux-build/*
-            artifacts/macos-build/*
+            artifacts/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
