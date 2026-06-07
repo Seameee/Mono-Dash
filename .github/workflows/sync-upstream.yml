@@ -63,7 +63,7 @@ jobs:
           }
           git push origin main
 
-      - name: Create sync branch and PR (pr mode)
+      - name: Create sync branch, merge and push (pr mode)
         if: steps.check.outputs.has_changes == 'true' && (github.event.inputs.sync_mode != 'direct' || github.event_name == 'schedule')
         id: pr
         run: |
@@ -75,24 +75,16 @@ jobs:
             exit 1
           }
           git push origin "$SYNC_BRANCH"
+          PR_URL=$(gh pr create --base main --head "$SYNC_BRANCH" --title "chore: sync upstream changes from bin64/Mono-Dash" --body "This PR syncs the latest changes from the upstream repository.
+
+- Upstream: bin64/Mono-Dash
+- Branch: main
+- Synced at: $(date -u +%Y-%m-%dT%H:%M:%SZ)" --label upstream-sync)
           echo "branch=$SYNC_BRANCH" >> $GITHUB_OUTPUT
           echo "has_conflict=false" >> $GITHUB_OUTPUT
-
-      - name: Create Pull Request
-        if: steps.check.outputs.has_changes == 'true' && steps.pr.outputs.has_conflict == 'false'
-        uses: peter-evans/create-pull-request@v6
-        with:
-          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
-          branch: ${{ steps.pr.outputs.branch }}
-          title: 'chore: sync upstream changes from bin64/Mono-Dash'
-          body: |
-            This PR syncs the latest changes from the upstream repository.
-            
-            - Upstream: bin64/Mono-Dash
-            - Branch: main
-            - Synced at: ${{ github.event.repository.updated_at }}
-          labels: upstream-sync
-          delete-branch: true
+          echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Create issue on conflict
         if: failure() && steps.pr.outputs.has_conflict == 'true'
