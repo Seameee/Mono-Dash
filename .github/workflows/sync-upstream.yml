@@ -1,100 +1,40 @@
-name: Sync from Upstream
-
-on:
-  schedule:
-    # Run at 05:00 UTC every day
-    - cron: '0 5 * * *'
-  workflow_dispatch:
-    inputs:
-      sync_mode:
-        description: 'Sync mode: pr (create PR) or direct (direct push)'
-        required: false
-        default: 'pr'
-        type: choice
-        options:
-          - pr
-          - direct
+name: Upstream Sync
 
 permissions:
   contents: write
-  pull-requests: write
-  issues: write
+
+on:
+  schedule:
+    - cron: "0 0 * * *" # every day
+  workflow_dispatch:
 
 jobs:
-  sync-upstream:
+  sync_latest_from_upstream:
+    name: Sync latest commits from upstream repo
     runs-on: ubuntu-latest
+    if: ${{ github.event.repository.fork }}
+
     steps:
-      - name: Checkout fork repository
-        uses: actions/checkout@v4
+      # Step 1: run a standard checkout action
+      - name: Checkout target repo
+        uses: actions/checkout@v6
+
+      # Step 2: run the sync action
+      - name: Sync upstream changes
+        id: sync
+        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
         with:
-          fetch-depth: 0
-          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          upstream_sync_repo: bin64/Mono-Dash
+          upstream_sync_branch: main
+          target_sync_branch: main
+          target_repo_token: ${{ secrets.GITHUB_TOKEN }} # automatically generated, no need to set
 
-      - name: Configure Git
+          # Set test_mode true to run tests instead of the true action!!
+          test_mode: false
+
+      - name: Sync check
+        if: failure()
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Add upstream remote and fetch
-        run: |
-          git remote add upstream https://github.com/bin64/Mono-Dash.git
-          git fetch upstream main
-
-      - name: Check for changes
-        id: check
-        run: |
-          LOCAL=$(git rev-parse main)
-          UPSTREAM=$(git rev-parse upstream/main)
-          if [ "$LOCAL" = "$UPSTREAM" ]; then
-            echo "has_changes=false" >> $GITHUB_OUTPUT
-            echo "No new changes from upstream."
-          else
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-            echo "Changes detected. Local: $LOCAL, Upstream: $UPSTREAM"
-          fi
-
-      - name: Direct merge (direct mode)
-        if: steps.check.outputs.has_changes == 'true' && github.event.inputs.sync_mode == 'direct'
-        run: |
-          git checkout main
-          git merge upstream/main --no-edit || {
-            echo "::error::Merge conflict detected. Switching to PR mode."
-            exit 1
-          }
-          git push origin main
-
-      - name: Create sync branch, merge and push (pr mode)
-        if: steps.check.outputs.has_changes == 'true' && (github.event.inputs.sync_mode != 'direct' || github.event_name == 'schedule')
-        id: pr
-        run: |
-          SYNC_BRANCH="sync-upstream-$(date +%Y%m%d-%H%M%S)"
-          git checkout -b "$SYNC_BRANCH"
-          git merge upstream/main --no-edit || {
-            echo "has_conflict=true" >> $GITHUB_OUTPUT
-            echo "::error::Merge conflict detected. Creating issue."
-            exit 1
-          }
-          git push origin "$SYNC_BRANCH"
-          PR_URL=$(gh pr create --base main --head "$SYNC_BRANCH" --title "chore: sync upstream changes from bin64/Mono-Dash" --body "This PR syncs the latest changes from the upstream repository.
-
-- Upstream: bin64/Mono-Dash
-- Branch: main
-- Synced at: $(date -u +%Y-%m-%dT%H:%M:%SZ)" --label upstream-sync)
-          echo "branch=$SYNC_BRANCH" >> $GITHUB_OUTPUT
-          echo "has_conflict=false" >> $GITHUB_OUTPUT
-          echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
-
-      - name: Create issue on conflict
-        if: failure() && steps.pr.outputs.has_conflict == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: 'Conflict detected during upstream sync',
-              body: `Automatic upstream sync failed due to merge conflicts.\n\nPlease resolve manually:\n\n\`\`\`bash\ngit fetch upstream\ngit checkout main\ngit merge upstream/main\n# resolve conflicts...\ngit push origin main\n\`\`\``,
-              labels: ['upstream-sync', 'conflict']
-            })
+          echo "[Error] 由于上游仓库的 workflow 文件变更，导致 GitHub 自动暂停了本次自动更新，你需要手动 Sync Fork 一次，详细教程请查看项目README.md "
+          echo "[Error] Due to a change in the workflow file of the upstream repository, GitHub has automatically suspended the scheduled automatic update. You need to manually sync your fork. Please refer to the project README.md for instructions. "
+          exit 1
